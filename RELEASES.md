@@ -1,3 +1,7 @@
+## Release 1.2.0
+
+- Fix Project Metadata
+
 ## Release 1.1.0
 
 - Fix Licences

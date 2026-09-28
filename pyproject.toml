@@ -1,6 +1,6 @@
 [project]
 name = "business-workflow-manager"
-version = "1.1.0"
+version = "1.2.0"
 description = "Reusable workflow engine with ORM models, YAML config, and runtime step progression"
 readme = { file = "README.md", content-type = "text/markdown"}
 license = "LGPL-3.0-only"
@@ -44,10 +44,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/geops/business-workflow-manager"
-Repository = "https://github.com/geops/business-workflow-manager"
+Homepage = "https://github.com/geops-open-source/business-workflow-manager"
+Repository = "https://github.com/geops-open-source/business-workflow-manager"
 Documentation = "https://pages.geops.io/geops/business-workflow-manager/"
-Issues = "https://github.com/geops/business-workflow-manager/issues"
+Issues = "https://github.com/geops-open-source/business-workflow-manager/issues"
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
