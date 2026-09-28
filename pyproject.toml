@@ -1,0 +1,99 @@
+[project]
+name = "business-workflow-manager"
+version = "1.1.0"
+description = "Reusable workflow engine with ORM models, YAML config, and runtime step progression"
+readme = { file = "README.md", content-type = "text/markdown"}
+license = "LGPL-3.0-only"
+license-files = ["LICENSE", "COPYING"]
+authors = [
+    { name = "geOps LLC", email = "info@geops.com" }
+]
+maintainers = [
+    { name = "geOps LLC", email = "info@geops.com" }
+]
+keywords = [
+    "workflow",
+    "workflow-engine",
+    "sqlalchemy",
+    "orm",
+    "state-machine",
+    "bpm",
+    "task-management",
+    "yaml",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Scheduling",
+    "Typing :: Typed",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy~=2.0",
+    "pydantic>=2.0",
+    "pyyaml",
+    "jmespath",
+]
+
+[project.urls]
+Homepage = "https://github.com/geops/business-workflow-manager"
+Repository = "https://github.com/geops/business-workflow-manager"
+Documentation = "https://pages.geops.io/geops/business-workflow-manager/"
+Issues = "https://github.com/geops/business-workflow-manager/issues"
+
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+strict = true
+verbosity_assertions = "2"
+
+
+[tool.pyright]
+include = ["src", "tests"]
+strict = ["src"]
+
+[tool.ruff]
+include = ["pyproject.toml", "src/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes
+    "E",      # pycodestyle
+    "W",      # pycodestyle
+    "UP",     # pyupgrade
+    "C901",   # mccabe complexity
+    "YTT",    # no sys.version tuple comparisons
+    "ASYNC",  # no obviously blocking io in coroutine
+    "G",      # flake8-logging-format
+    "PIE",    # unnecessary statements
+    "SLOT",   # str, tuple, namedtuple subclasses need __slots__
+    "FIX003", # XXX
+    "SIM",    # flake8-simplify
+    "I",      # isort
+    "T100",   # breakpoints
+]
+ignore = [
+    "E501", # line to long, handled by black
+    "C901", # too many if statements
+]
+
+[dependency-groups]
+dev = [
+    "psycopg>=3.3.4",
+    "pyright>=1.1.409",
+    "pytest>=9.0.3",
+    "ruff>=0.15.12",
+    "sphinx",
+]
