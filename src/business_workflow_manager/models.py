@@ -292,7 +292,16 @@ class Node(Base, AuditMixin, kw_only=True):
 
     @property
     def is_readonly(self) -> bool:
-        return isinstance(self, FormNode | DocumentNode) and self.next_node is not None
+        """Only forms are read-only, and only while a next node exists.
+
+        Deleting the next node makes the form editable again.
+        """
+        return isinstance(self, FormNode) and self.next_node is not None
+
+    @property
+    def is_deletable(self) -> bool:
+        """A node can only be deleted if it has no children and no next node."""
+        return not self.children and self.next_node is None
 
 
 class WorkflowNode(Node):

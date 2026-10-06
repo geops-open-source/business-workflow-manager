@@ -23,6 +23,7 @@ class _CommonKwargs(TypedDict):
     is_public: bool
     is_moveable: bool
     is_readonly: bool
+    is_deletable: bool
     parent_id: int | None
     next_node_id: int | None
     wf_config_id: int | None
@@ -49,6 +50,7 @@ def _common_kwargs(node: Node) -> _CommonKwargs:
         is_public=node.is_public,
         is_moveable=node.is_moveable,
         is_readonly=node.is_readonly,
+        is_deletable=node.is_deletable,
         parent_id=node.parent_id,
         next_node_id=node.next_node_id,
         wf_config_id=node.wf_config_id,
@@ -77,6 +79,7 @@ class NodeInfo:
     is_public: bool
     is_moveable: bool
     is_readonly: bool
+    is_deletable: bool
     parent_id: int | None
     next_node_id: int | None
     wf_config_id: int | None

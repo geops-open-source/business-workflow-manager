@@ -586,7 +586,18 @@ class WorkflowManager:
         parent = None
         if parent_id is not None:
             reference_node = self._get_node(parent_id)
-            parent = get_parent_of_type(reference_node, WorkflowNode)
+
+            if workflow_parent := get_parent_of_type(reference_node, WorkflowNode):
+                parent = workflow_parent
+            elif task_parent := get_parent_of_type(reference_node, TaskNode):
+                parent = (
+                    task_parent
+                    if not task_parent.parent_id
+                    or get_parent_of_type(task_parent, WorkflowNode)
+                    else task_parent.parent
+                    if isinstance(task_parent.parent, TaskNode)
+                    else None
+                )
 
         node = TaskNode(
             title=title,
@@ -898,22 +909,23 @@ class WorkflowManager:
     def delete_node(self, node_id: int) -> None:
         """Delete a node.
 
-        A node can only be deleted if it has no children and is not readonly.
+        A node can only be deleted if it has no children and no next node
+        (see :attr:`Node.is_deletable`).
 
         Args:
             node_id: ID of the node to delete.
 
         Raises:
             WorkflowNotFound: If the node doesn't exist.
-            WorkflowException: If the node has children or is readonly.
+            WorkflowException: If the node is not deletable.
         """
 
         node = self._get_node(node_id)
 
-        if node.children:
-            raise WorkflowException("Cannot delete node: it has children assigned.")
-        if node.is_readonly:
-            raise WorkflowException("Cannot delete node: it is read-only.")
+        if not node.is_deletable:
+            raise WorkflowException(
+                "Cannot delete node: it has children or a next node."
+            )
 
         self.session.delete(node)
         self.session.flush()

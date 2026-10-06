@@ -132,7 +132,7 @@ def test_parent_walks_up_to_workflow(mgr: WorkflowManager, wf_node: WorkflowNode
     assert result.parent_id == wf_node.wf_node_id
 
 
-def test_parent_no_suitable_ancestor(mgr: WorkflowManager):
+def test_parent_may_be_task(mgr: WorkflowManager, wf_node: WorkflowNodeInfo):
     """If reference node has no WorkflowNode ancestor, task is top-level."""
     ts = datetime(2024, 6, 15)
     # Create a top-level task (no parent)
@@ -141,7 +141,24 @@ def test_parent_no_suitable_ancestor(mgr: WorkflowManager):
     result = mgr.create_task_node(
         entity_id="entity-1", title="Another", started_at=ts, parent_id=task1.wf_node_id
     )
-    assert result.parent_id is None
+    assert result.parent_id == task1.wf_node_id
+
+
+def test_task_gets_created_at_second_level_if_on_third_level(mgr: WorkflowManager):
+    """If reference task has no task ancestor, the new task is top-level."""
+    ts = datetime(2024, 6, 15)
+    # Create a top-level task and a task nested under it.
+    top = mgr.create_task_node(entity_id="entity-1", title="Top", started_at=ts)
+    child = mgr.create_task_node(
+        entity_id="entity-1", title="Another", started_at=ts, parent_id=top.wf_node_id
+    )
+    result = mgr.create_task_node(
+        entity_id="entity-1",
+        title="Another 2",
+        started_at=ts,
+        parent_id=child.wf_node_id,
+    )
+    assert result.parent_id == top.wf_node_id
 
 
 def test_parent_not_found(mgr: WorkflowManager):

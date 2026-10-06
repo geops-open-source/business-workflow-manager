@@ -309,7 +309,7 @@ with WorkflowManager(session) as mgr:
 | `update_document_node(node_id, *, ...)` | Update a document node (always sets status to FINISHED). Returns `DocumentNodeInfo`. |
 | `create_note_node(entity_id, title, started_at, *, ...)` | Create an ad-hoc note node. Returns `NoteNodeInfo`. |
 | `update_note_node(node_id, *, ...)` | Update a note node (always sets status to FINISHED). Returns `NoteNodeInfo`. |
-| `delete_node(node_id)` | Delete a node (fails if it has children or is readonly). |
+| `delete_node(node_id)` | Delete a node (fails if it has children or a next node, see `is_deletable`). |
 | `get_next_steps(node_id)` | Get valid next steps for the node. Returns `list[StepOption]`. |
 | `start_next_step(node_id, step_id)` | Create and link the next execution node. Returns `NodeInfo`. |
 | `handle_event(event)` | Dispatch an event to all registered handlers. |
