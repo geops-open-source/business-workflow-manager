@@ -42,9 +42,9 @@ def form_node(mgr: WorkflowManager) -> FormNodeInfo:
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
-    task_steps = mgr.get_next_steps(task.wf_node_id)
+    task_steps = mgr.get_next_steps(task.wf_node_id).available_options
     node = mgr.start_next_step(task.wf_node_id, task_steps[0].wf_config_id)
     assert isinstance(node, FormNodeInfo)
     return node

@@ -127,7 +127,7 @@ with Session(engine) as session:
     # => WorkflowNodeInfo(wf_node_id=1, status=STARTED, ...)
 
     # Get available first steps (start tasks)
-    next_steps = mgr.get_next_steps(wf_node.wf_node_id)
+    next_steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     # => [StepOption(wf_config_id=5, name='review', type=TASK, ...)]
 
     # Start the first task
@@ -135,7 +135,7 @@ with Session(engine) as session:
     # => TaskNodeInfo(wf_node_id=2, status=STARTED, ...)
 
     # Get the task's steps
-    steps = mgr.get_next_steps(task_node.wf_node_id)
+    steps = mgr.get_next_steps(task_node.wf_node_id).available_options
     # => [StepOption(wf_config_id=8, name='assessment', type=FORM, ...)]
 
     # Start the form step
@@ -145,7 +145,7 @@ with Session(engine) as session:
     session.commit()
 ```
 
-All public API methods return **frozen dataclasses** (`NodeInfo` subclasses and `StepOption`), not mutable ORM instances. Methods accept plain integer IDs (`node_id`, `step_id`) as arguments.
+All public API methods return **frozen dataclasses** (`NodeInfo` subclasses, `StepInfo` and `StepOption`), not mutable ORM instances. Methods accept plain integer IDs (`node_id`, `step_id`) as arguments.
 
 ### 5. Conditional Branching
 
@@ -153,7 +153,7 @@ After completing all steps in a task, the engine evaluates link conditions to de
 
 ```python
     # After finishing all steps in the "review" task, get next tasks:
-    next_tasks = mgr.get_next_steps(task_node.wf_node_id)
+    next_tasks = mgr.get_next_steps(task_node.wf_node_id).available_options
     # If approved==True: => [StepOption(name='finalize', ...)]
     # If approved==False: => [StepOption(name='reject', ...)]
 ```
@@ -296,8 +296,9 @@ with WorkflowManager(session) as mgr:
 
 | Method | Description |
 |--------|-------------|
-| `load_workflow_from_file(f)` | Parse YAML file and load into DB. Returns `(Workflow, config)`. |
-| `load_workflow(config)` | Load a parsed `Workflow` config into DB. Returns the ORM `Workflow`. |
+| `load_workflow_from_file(f)` | Parse YAML file and load into DB, keeping edited translations. Returns `(Workflow, config)`. |
+| `load_workflow(config)` | Load a parsed `Workflow` config into DB, keeping edited translations. Returns the ORM `Workflow`. |
+| `load_workflows_from_selection(selection_file, base_dir)` | Load all workflow files listed in a plain-text selection file into DB, keeping edited translations. Returns the loaded `list[Workflow]` in file order. |
 | `dump_workflow(workflow)` | Export an ORM `Workflow` back to a pydantic config object. |
 | `dump_workflow_to_file(key, f)` | Export a workflow (by UUID key) to YAML file. |
 | `start_workflow(workflow_id, entity_id)` | Create a new workflow instance. Returns `WorkflowNodeInfo`. |
@@ -309,7 +310,7 @@ with WorkflowManager(session) as mgr:
 | `update_document_node(node_id, *, ...)` | Update a document node (always sets status to FINISHED). Returns `DocumentNodeInfo`. |
 | `create_note_node(entity_id, title, started_at, *, ...)` | Create an ad-hoc note node. Returns `NoteNodeInfo`. |
 | `update_note_node(node_id, *, ...)` | Update a note node (always sets status to FINISHED). Returns `NoteNodeInfo`. |
-| `delete_node(node_id)` | Delete a node (fails if it has children or a next node, see `is_deletable`). |
+| `delete_node(node_id)` | Delete a node (fails if it has children or is readonly). |
 | `get_next_steps(node_id)` | Get valid next steps for the node. Returns `list[StepOption]`. |
 | `start_next_step(node_id, step_id)` | Create and link the next execution node. Returns `NodeInfo`. |
 | `handle_event(event)` | Dispatch an event to all registered handlers. |
@@ -360,7 +361,17 @@ All public API methods return **frozen dataclasses** (not ORM instances):
 
 | Class | Fields |
 |-------|--------|
+| `StepInfo` | `available_options` (`list[StepOption]`), `unavailable_reasons` (`list[NextStepUnavailableReason]`) |
 | `StepOption` | `wf_config_id`, `title`, `type`, `name`, `is_optional` |
+
+`unavailable_reasons` lists every reason found while determining the next steps (deduplicated, ordered as defined in `NextStepUnavailableReason`, which is also the display priority). It can be non-empty even if `available_options` is not, e.g. when a conditional step was skipped or a valid link points to `END`. It is empty if the node, its parent task or its workflow is `SKIPPED` or `INACTIVE`.
+
+| `NextStepUnavailableReason` | Meaning |
+|-----------------------------|---------|
+| `TASK_CLOSED` | The parent task of a step is `FINISHED`, or the workflow is `FINISHED` before any task was started. |
+| `END_OF_WORKFLOW` | A valid link points to `END`, or the task has no links. |
+| `STEP_NOT_CLOSED` | The current step or started task is not finished yet, or a condition of a step or link was not met (e.g. a form selection is missing). |
+| `TASK_WITHOUT_WORKFLOW` | The node is not part of a configured workflow (e.g. an ad-hoc task or note without a workflow parent). |
 
 Use `step.wf_config_id` when calling `start_next_step`, and `node.wf_node_id` when calling methods that take a `node_id`.
 
@@ -457,6 +468,7 @@ from business_workflow_manager.exceptions import (
     WorkflowExists,        # Duplicate workflow
     InvalidWorkflowStep,   # Step not valid for current state
     CascadeConflict,       # Update conflicts with child nodes
+    WorkflowSelectionError,  # Selection file or listed workflow file missing / invalid
 )
 ```
 
@@ -511,6 +523,47 @@ with Session(engine) as session:
     # ... do other work in the same transaction ...
     session.commit()  # You decide when to commit
 ```
+
+### Loading a Selection of Workflows
+
+A selection file is a plain-text list of workflow files, relative to a
+workflows folder, one per line. Blank lines and lines starting with `#`
+are ignored. Globs are not supported; absolute paths are rejected.
+
+```text
+# workflows for customer X
+auskunft.yml
+baugesuch/vorabklaerung.yml
+```
+
+```python
+from business_workflow_manager import WorkflowSelectionError
+
+try:
+    loaded = mgr.load_workflows_from_selection("config/workflows.txt", "workflows/")
+    session.commit()
+except WorkflowSelectionError:
+    session.rollback()
+    raise
+```
+
+A missing selection file, a listed file that does not exist or an invalid
+workflow file raise `WorkflowSelectionError`. All files are parsed before
+anything is written. The function only flushes; commit or roll back yourself
+to make the import atomic.
+
+Translations are handled per row (key + language). This applies to every
+import path: `load_workflow`, `load_workflow_from_file` and
+`load_workflows_from_selection`:
+
+- row exists and was never edited (`updated_at` is empty) → value is updated
+  from the YAML, `updated_at` stays empty
+- row exists and was edited (`updated_at` is set) → kept unchanged
+- key is in the YAML but not in the database → inserted
+- rows no longer produced by the YAML are **not** deleted
+
+Edited translations are never overwritten or deleted by an import. There is
+no option to force an overwrite.
 
 ## YAML Schema Reference
 

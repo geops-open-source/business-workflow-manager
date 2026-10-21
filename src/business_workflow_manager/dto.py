@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Self, TypedDict
 
 from .models import DocumentNode, FormNode, Node, NoteNode, TaskNode, WorkflowNode
-from .types import ItemType, NodeStatus, NodeType
+from .types import ItemType, NextStepUnavailableReason, NodeStatus, NodeType
 
 
 class _CommonKwargs(TypedDict):
@@ -169,3 +169,20 @@ class StepOption:
     type: ItemType
     name: str
     is_optional: bool
+
+
+@dataclass(frozen=True)
+class StepInfo:
+    """Valid next steps of a node, plus all reasons that restricted them.
+
+    ``unavailable_reasons`` lists every reason found while determining the next
+    steps (deduplicated, ordered as defined in ``NextStepUnavailableReason``).
+    It may be non-empty even if
+    ``available_options`` is not, e.g. if a conditional step was skipped. It is
+    empty if the node (or its parent task/workflow) is skipped or inactive.
+    """
+
+    available_options: list[StepOption]
+    unavailable_reasons: list[NextStepUnavailableReason] = field(
+        default_factory=list[NextStepUnavailableReason]
+    )

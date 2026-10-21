@@ -1,5 +1,6 @@
 """Tests for business_workflow_manager.engine (runtime step progression)."""
 
+from datetime import UTC, datetime
 from io import StringIO
 
 import pytest
@@ -8,11 +9,13 @@ from sqlalchemy.orm import Session
 from business_workflow_manager import WorkflowManager, WorkflowManagerConfig
 from business_workflow_manager.dto import (
     DocumentNodeInfo,
+    StepInfo,
     StepOption,
     TaskNodeInfo,
     WorkflowNodeInfo,
 )
 from business_workflow_manager.engine import (
+    ConfigStepInfo,
     Engine,
     default_is_applicable,
     get_last_step,
@@ -24,8 +27,8 @@ from business_workflow_manager.exceptions import (
     WorkflowException,
     WorkflowNotFound,
 )
-from business_workflow_manager.models import Node, Workflow
-from business_workflow_manager.types import NodeStatus
+from business_workflow_manager.models import Node, TaskNode, Workflow
+from business_workflow_manager.types import NextStepUnavailableReason, NodeStatus
 
 WORKFLOW_CONFIG = """\
 workflow:
@@ -106,6 +109,77 @@ workflow:
       steps: []
       links: []
 """
+
+WORKFLOW_FOR_REASONS = """\
+workflow:
+  title: Reasons workflow
+  version: 1
+  min_per_entity: 0
+  max_per_entity: null
+  start_task_ref: t_doc_links
+  tasks:
+    t_doc_links:
+      title: Document, then conditional link
+      start_task: true
+      steps:
+      - type: document
+        title: Doc
+      links:
+        - task_ref: t_target
+          condition: choice == `"yes"`
+    t_doc_end:
+      title: Document, then END
+      start_task: true
+      steps:
+      - type: document
+        title: Last doc
+      links:
+        - task_ref: END
+    t_cond_steps:
+      title: Only a conditional step
+      start_task: true
+      steps:
+      - type: document
+        title: Conditional doc
+        condition: flag == `true`
+      links: []
+    t_skip_then_step:
+      title: Conditional step, then a regular step
+      start_task: true
+      steps:
+      - type: document
+        title: Skippable doc
+        condition: flag == `true`
+      - type: document
+        title: Regular doc
+      links: []
+    t_end_and_cond:
+      title: Conditional link and END
+      start_task: true
+      steps: []
+      links:
+        - task_ref: t_target
+          condition: choice == `"yes"`
+        - task_ref: END
+    t_target:
+      title: Target
+      start_task: true
+      steps: []
+      links:
+        - task_ref: END
+    END:
+      title: __END__
+      steps: []
+      links: []
+"""
+
+
+@pytest.fixture
+def workflow_for_reasons(mgr: WorkflowManager) -> Workflow:
+    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_FOR_REASONS))
+    mgr.session.flush()
+    mgr.session.expire_all()
+    return wf
 
 
 @pytest.fixture
@@ -322,7 +396,7 @@ def test_entity_data_key_valid_value_does_not_raise():
 
 def test_get_next_steps_returns_step_options(mgr: WorkflowManager, workflow: Workflow):
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     assert len(steps) >= 1
     assert all(isinstance(s, StepOption) for s in steps)
     assert steps[0].name == "task1"
@@ -333,7 +407,7 @@ def test_full_progression(mgr: WorkflowManager, workflow: Workflow):
     assert isinstance(wf_node, WorkflowNodeInfo)
 
     # Get available steps from workflow node
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task1_step = next(s for s in steps if s.name == "task1")
 
     # Start task1
@@ -342,7 +416,7 @@ def test_full_progression(mgr: WorkflowManager, workflow: Workflow):
     assert task_node.status == NodeStatus.STARTED
 
     # Get steps for the task
-    task_steps = mgr.get_next_steps(task_node.wf_node_id)
+    task_steps = mgr.get_next_steps(task_node.wf_node_id).available_options
     assert len(task_steps) == 1
     doc1_config = workflow.tasks["task1"].steps[0].step
     assert task_steps[0].wf_config_id == doc1_config.wf_config_id
@@ -358,7 +432,7 @@ def test_full_progression(mgr: WorkflowManager, workflow: Workflow):
     mgr.session.flush()
 
     # Get next step after doc1
-    next_steps = mgr.get_next_steps(doc1.wf_node_id)
+    next_steps = mgr.get_next_steps(doc1.wf_node_id).available_options
     assert len(next_steps) == 1
     doc2_config = workflow.tasks["task1"].steps[1].step
     assert next_steps[0].wf_config_id == doc2_config.wf_config_id
@@ -372,7 +446,7 @@ def test_full_progression(mgr: WorkflowManager, workflow: Workflow):
     orm_doc2.status = NodeStatus.FINISHED
     mgr.session.flush()
 
-    next_steps = mgr.get_next_steps(doc2.wf_node_id)
+    next_steps = mgr.get_next_steps(doc2.wf_node_id).available_options
     assert len(next_steps) == 1
     assert next_steps[0].name == "task2"
 
@@ -385,7 +459,9 @@ def test_full_progression(mgr: WorkflowManager, workflow: Workflow):
     orm_task2.status = NodeStatus.FINISHED
     mgr.session.flush()
 
-    assert mgr.get_next_steps(task2_node.wf_node_id) == []
+    assert mgr.get_next_steps(task2_node.wf_node_id) == StepInfo(
+        [], [NextStepUnavailableReason.END_OF_WORKFLOW]
+    )
 
 
 def test_invalid_step_raises(mgr: WorkflowManager, workflow: Workflow):
@@ -401,7 +477,7 @@ def test_invalid_step_raises(mgr: WorkflowManager, workflow: Workflow):
 def test_workflow_node_returns_start_tasks(mgr: WorkflowManager, workflow: Workflow):
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     assert any(s.name == "task1" for s in steps)
 
 
@@ -412,16 +488,31 @@ def test_finished_workflow_returns_nothing(mgr: WorkflowManager, workflow: Workf
     orm_node.status = NodeStatus.FINISHED
     mgr.session.flush()
 
-    assert mgr.get_next_steps(wf_node.wf_node_id) == []
+    assert mgr.get_next_steps(wf_node.wf_node_id) == StepInfo(
+        [], [NextStepUnavailableReason.TASK_CLOSED]
+    )
+
+
+@pytest.mark.parametrize("status", [NodeStatus.SKIPPED, NodeStatus.INACTIVE])
+def test_skipped_or_inactive_workflow_has_no_reasons(
+    mgr: WorkflowManager, workflow: Workflow, status: NodeStatus
+):
+    wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
+
+    orm_node = mgr.session.get_one(Node, wf_node.wf_node_id)
+    orm_node.status = status
+    mgr.session.flush()
+
+    assert mgr.get_next_steps(wf_node.wf_node_id) == StepInfo([], [])
 
 
 def test_task_node_returns_steps(mgr: WorkflowManager, workflow: Workflow):
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
-    task_steps = mgr.get_next_steps(task_node.wf_node_id)
+    task_steps = mgr.get_next_steps(task_node.wf_node_id).available_options
     assert len(task_steps) == 1
     assert (
         task_steps[0].wf_config_id == workflow.tasks["task1"].steps[0].step.wf_config_id
@@ -435,7 +526,7 @@ def test_condition_met_includes_step(
         workflow_with_conditions.wf_config_id, entity_id="entity-1"
     )
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     # Set condition data on task node
@@ -445,7 +536,7 @@ def test_condition_met_includes_step(
     mgr.session.flush()
 
     # Start first step (always present)
-    task_steps = mgr.get_next_steps(task_node.wf_node_id)
+    task_steps = mgr.get_next_steps(task_node.wf_node_id).available_options
     doc1 = mgr.start_next_step(task_node.wf_node_id, task_steps[0].wf_config_id)
 
     # Finish doc1
@@ -457,7 +548,7 @@ def test_condition_met_includes_step(
     conditional_config_id = (
         workflow_with_conditions.tasks["task1"].steps[1].step.wf_config_id
     )
-    next_steps = mgr.get_next_steps(doc1.wf_node_id)
+    next_steps = mgr.get_next_steps(doc1.wf_node_id).available_options
     assert any(s.wf_config_id == conditional_config_id for s in next_steps)
 
 
@@ -468,7 +559,7 @@ def test_condition_not_met_skips_step(
         workflow_with_conditions.wf_config_id, entity_id="entity-1"
     )
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     # Set condition data: flag is False
@@ -477,7 +568,7 @@ def test_condition_not_met_skips_step(
     mgr.session.flush()
 
     # Start first step
-    task_steps = mgr.get_next_steps(task_node.wf_node_id)
+    task_steps = mgr.get_next_steps(task_node.wf_node_id).available_options
     doc1 = mgr.start_next_step(task_node.wf_node_id, task_steps[0].wf_config_id)
 
     # Finish doc1
@@ -489,7 +580,7 @@ def test_condition_not_met_skips_step(
     conditional_config_id = (
         workflow_with_conditions.tasks["task1"].steps[1].step.wf_config_id
     )
-    next_steps = mgr.get_next_steps(doc1.wf_node_id)
+    next_steps = mgr.get_next_steps(doc1.wf_node_id).available_options
     assert all(s.wf_config_id != conditional_config_id for s in next_steps)
 
 
@@ -498,7 +589,7 @@ def test_conditional_links(mgr: WorkflowManager, workflow_with_conditions: Workf
         workflow_with_conditions.wf_config_id, entity_id="entity-1"
     )
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     # Set data and finish task
@@ -507,7 +598,7 @@ def test_conditional_links(mgr: WorkflowManager, workflow_with_conditions: Workf
     orm_task.status = NodeStatus.FINISHED
     mgr.session.flush()
 
-    next_tasks = mgr.get_next_steps(task_node.wf_node_id)
+    next_tasks = mgr.get_next_steps(task_node.wf_node_id).available_options
     task_names = [t.name for t in next_tasks]
     assert "task_yes" in task_names
 
@@ -519,7 +610,7 @@ def test_get_last_step(mgr: WorkflowManager, workflow: Workflow):
     orm_wf = mgr.session.get_one(Node, wf_node.wf_node_id)
     assert get_last_step(orm_wf) is orm_wf
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     mgr.session.expire(orm_wf)
@@ -530,10 +621,10 @@ def test_get_last_step(mgr: WorkflowManager, workflow: Workflow):
 def test_get_parent_task(mgr: WorkflowManager, workflow: Workflow):
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
-    task_steps = mgr.get_next_steps(task_node.wf_node_id)
+    task_steps = mgr.get_next_steps(task_node.wf_node_id).available_options
     doc_node = mgr.start_next_step(task_node.wf_node_id, task_steps[0].wf_config_id)
 
     orm_doc = mgr.session.get_one(Node, doc_node.wf_node_id)
@@ -544,9 +635,355 @@ def test_get_parent_task(mgr: WorkflowManager, workflow: Workflow):
 def test_get_parent_workflow(mgr: WorkflowManager, workflow: Workflow):
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
 
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     orm_task = mgr.session.get_one(Node, task_node.wf_node_id)
     orm_wf = mgr.session.get_one(Node, wf_node.wf_node_id)
     assert get_parent_workflow(orm_task) is orm_wf
+
+
+R = NextStepUnavailableReason
+
+
+def _set_node(
+    mgr: WorkflowManager,
+    node_id: int,
+    *,
+    status: NodeStatus | None = None,
+    data: dict[str, object] | None = None,
+) -> None:
+    orm_node = mgr.session.get_one(Node, node_id)
+    if status is not None:
+        orm_node.status = status
+    if data is not None:
+        orm_node.data = data
+    mgr.session.flush()
+
+
+def _start_task(
+    mgr: WorkflowManager,
+    workflow: Workflow,
+    name: str,
+    data: dict[str, object] | None = None,
+) -> TaskNodeInfo:
+    wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
+    task_node = mgr.start_next_step(
+        wf_node.wf_node_id, workflow.tasks[name].wf_config_id
+    )
+    assert isinstance(task_node, TaskNodeInfo)
+    if data is not None:
+        _set_node(mgr, task_node.wf_node_id, data=data)
+    return task_node
+
+
+def _finish_first_step(mgr: WorkflowManager, task_node: TaskNodeInfo) -> int:
+    """Start the first step of the task, mark it finished, return its node id."""
+    [step] = mgr.get_next_steps(task_node.wf_node_id).available_options
+    doc = mgr.start_next_step(task_node.wf_node_id, step.wf_config_id)
+    _set_node(mgr, doc.wf_node_id, status=NodeStatus.FINISHED)
+    return doc.wf_node_id
+
+
+def _step_config_id(workflow: Workflow, task: str, index: int) -> int:
+    return workflow.tasks[task].steps[index].step.wf_config_id
+
+
+def test_get_next_steps_returns_step_info(mgr: WorkflowManager, workflow: Workflow):
+    wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
+
+    info = mgr.get_next_steps(wf_node.wf_node_id)
+
+    assert isinstance(info, StepInfo)
+    assert [o.name for o in info.available_options] == ["task1"]
+    assert info.unavailable_reasons == []
+
+
+@pytest.mark.parametrize("status", [NodeStatus.SKIPPED, NodeStatus.INACTIVE])
+def test_skipped_or_inactive_task_has_no_reasons(
+    mgr: WorkflowManager, workflow: Workflow, status: NodeStatus
+):
+    task_node = _start_task(mgr, workflow, "task1")
+    _set_node(mgr, task_node.wf_node_id, status=status)
+
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [])
+
+
+@pytest.mark.parametrize("status", [NodeStatus.SKIPPED, NodeStatus.INACTIVE])
+def test_step_of_skipped_or_inactive_task_has_no_reasons(
+    mgr: WorkflowManager, workflow: Workflow, status: NodeStatus
+):
+    task_node = _start_task(mgr, workflow, "task1")
+    doc_id = _finish_first_step(mgr, task_node)
+    _set_node(mgr, task_node.wf_node_id, status=status)
+
+    assert mgr.get_next_steps(doc_id) == StepInfo([], [])
+    # The task itself resolves to its last step.
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [])
+
+
+def test_reason_task_closed_for_step_of_finished_task(
+    mgr: WorkflowManager, workflow: Workflow
+):
+    task_node = _start_task(mgr, workflow, "task1")
+    doc_id = _finish_first_step(mgr, task_node)
+    _set_node(mgr, task_node.wf_node_id, status=NodeStatus.FINISHED)
+
+    assert mgr.get_next_steps(doc_id) == StepInfo([], [R.TASK_CLOSED])
+    # The task itself resolves to its last step.
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [R.TASK_CLOSED])
+
+
+def test_unfinished_step_of_finished_task_is_step_not_closed(
+    mgr: WorkflowManager, workflow: Workflow
+):
+    task_node = _start_task(mgr, workflow, "task1")
+    [step] = mgr.get_next_steps(task_node.wf_node_id).available_options
+    doc = mgr.start_next_step(task_node.wf_node_id, step.wf_config_id)
+    _set_node(mgr, task_node.wf_node_id, status=NodeStatus.FINISHED)
+
+    assert mgr.get_next_steps(doc.wf_node_id) == StepInfo([], [R.STEP_NOT_CLOSED])
+
+
+def test_reason_document_not_finished(mgr: WorkflowManager, workflow: Workflow):
+    task_node = _start_task(mgr, workflow, "task1")
+    [step] = mgr.get_next_steps(task_node.wf_node_id).available_options
+    doc = mgr.start_next_step(task_node.wf_node_id, step.wf_config_id)
+
+    assert mgr.get_next_steps(doc.wf_node_id) == StepInfo([], [R.STEP_NOT_CLOSED])
+
+
+def test_reason_started_task_without_steps(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(mgr, workflow_for_reasons, "t_target")
+
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [R.STEP_NOT_CLOSED])
+
+
+def test_reason_end_of_workflow_after_task(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(mgr, workflow_for_reasons, "t_target")
+    _set_node(mgr, task_node.wf_node_id, status=NodeStatus.FINISHED)
+
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [R.END_OF_WORKFLOW])
+
+
+def test_reason_end_of_workflow_after_last_document(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(mgr, workflow_for_reasons, "t_doc_end")
+    doc_id = _finish_first_step(mgr, task_node)
+
+    assert mgr.get_next_steps(doc_id) == StepInfo([], [R.END_OF_WORKFLOW])
+
+
+def test_reason_end_of_workflow_for_task_without_links(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(mgr, workflow_for_reasons, "t_cond_steps")
+    _set_node(mgr, task_node.wf_node_id, status=NodeStatus.FINISHED)
+
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [R.END_OF_WORKFLOW])
+
+
+def test_reason_unmet_link_after_task(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_doc_links", data={"choice": "no"}
+    )
+    _set_node(mgr, task_node.wf_node_id, status=NodeStatus.FINISHED)
+
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [R.STEP_NOT_CLOSED])
+
+
+def test_reason_unmet_link_after_last_document(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(mgr, workflow_for_reasons, "t_doc_links")
+    doc_id = _finish_first_step(mgr, task_node)
+
+    assert mgr.get_next_steps(doc_id) == StepInfo([], [R.STEP_NOT_CLOSED])
+
+
+def test_selection_made_returns_link_target(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(mgr, workflow_for_reasons, "t_doc_links")
+    doc_id = _finish_first_step(mgr, task_node)
+    _set_node(mgr, doc_id, data={"choice": "yes"})
+
+    info = mgr.get_next_steps(doc_id)
+
+    assert [o.name for o in info.available_options] == ["t_target"]
+    assert info.unavailable_reasons == []
+
+
+def test_reason_unmet_condition_for_only_step(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_cond_steps", data={"flag": False}
+    )
+
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo([], [R.STEP_NOT_CLOSED])
+
+
+def test_conditional_step_met_has_no_reasons(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_cond_steps", data={"flag": True}
+    )
+
+    info = mgr.get_next_steps(task_node.wf_node_id)
+
+    assert [o.wf_config_id for o in info.available_options] == [
+        _step_config_id(workflow_for_reasons, "t_cond_steps", 0)
+    ]
+    assert info.unavailable_reasons == []
+
+
+def test_reasons_alongside_options(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_skip_then_step", data={"flag": False}
+    )
+
+    info = mgr.get_next_steps(task_node.wf_node_id)
+
+    assert [o.wf_config_id for o in info.available_options] == [
+        _step_config_id(workflow_for_reasons, "t_skip_then_step", 1)
+    ]
+    assert info.unavailable_reasons == [R.STEP_NOT_CLOSED]
+
+
+def test_multiple_reasons_end_and_unmet_link(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_end_and_cond", data={"choice": "no"}
+    )
+    _set_node(mgr, task_node.wf_node_id, status=NodeStatus.FINISHED)
+
+    assert mgr.get_next_steps(task_node.wf_node_id) == StepInfo(
+        [], [R.END_OF_WORKFLOW, R.STEP_NOT_CLOSED]
+    )
+
+
+def test_end_link_reported_alongside_link_target(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_end_and_cond", data={"choice": "yes"}
+    )
+    _set_node(mgr, task_node.wf_node_id, status=NodeStatus.FINISHED)
+
+    info = mgr.get_next_steps(task_node.wf_node_id)
+
+    # END is never offered as an option, but reported as a reason.
+    assert [o.name for o in info.available_options] == ["t_target"]
+    assert info.unavailable_reasons == [R.END_OF_WORKFLOW]
+
+
+def test_reason_task_without_workflow_for_adhoc_note(mgr: WorkflowManager):
+    note = mgr.create_note_node(
+        entity_id="entity-1", title="Note", started_at=datetime.now(UTC)
+    )
+
+    assert mgr.get_next_steps(note.wf_node_id) == StepInfo(
+        [], [R.TASK_WITHOUT_WORKFLOW]
+    )
+
+
+def test_reason_task_without_workflow_for_adhoc_task(mgr: WorkflowManager):
+    task = mgr.create_task_node(
+        entity_id="entity-1", title="Task", started_at=datetime.now(UTC)
+    )
+
+    assert mgr.get_next_steps(task.wf_node_id) == StepInfo(
+        [], [R.TASK_WITHOUT_WORKFLOW]
+    )
+
+
+def test_reason_task_without_workflow_for_note_in_adhoc_task(mgr: WorkflowManager):
+    task = mgr.create_task_node(
+        entity_id="entity-1", title="Task", started_at=datetime.now(UTC)
+    )
+    note = mgr.create_note_node(
+        entity_id="entity-1",
+        title="Note",
+        started_at=datetime.now(UTC),
+        parent_id=task.wf_node_id,
+    )
+
+    assert mgr.get_next_steps(note.wf_node_id) == StepInfo(
+        [], [R.TASK_WITHOUT_WORKFLOW]
+    )
+
+
+def test_adhoc_note_uses_parent_task(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_cond_steps", data={"flag": False}
+    )
+    note = mgr.create_note_node(
+        entity_id="entity-1",
+        title="Note",
+        started_at=datetime.now(UTC),
+        parent_id=task_node.wf_node_id,
+    )
+
+    assert mgr.get_next_steps(note.wf_node_id) == StepInfo([], [R.STEP_NOT_CLOSED])
+
+
+def test_engine_get_valid_links_returns_config_step_info(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_end_and_cond", data={"choice": "no"}
+    )
+    orm_task = mgr.session.get_one(Node, task_node.wf_node_id)
+    assert isinstance(orm_task, TaskNode)
+
+    info = mgr.engine.get_valid_links(orm_task)
+
+    assert isinstance(info, ConfigStepInfo)
+    assert list(info.available_configs) == []
+    assert info.unavailable_reasons == {R.STEP_NOT_CLOSED, R.END_OF_WORKFLOW}
+
+
+def test_engine_get_next_task_steps_returns_config_step_info(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_skip_then_step", data={"flag": False}
+    )
+    orm_task = mgr.session.get_one(Node, task_node.wf_node_id)
+    assert isinstance(orm_task, TaskNode)
+
+    info = mgr.engine.get_next_task_steps(orm_task)
+
+    assert isinstance(info, ConfigStepInfo)
+    assert [c.wf_config_id for c in info.available_configs] == [
+        _step_config_id(workflow_for_reasons, "t_skip_then_step", 1)
+    ]
+    assert info.unavailable_reasons == {R.STEP_NOT_CLOSED}
+
+
+def test_start_next_step_rejects_step_skipped_by_condition(
+    mgr: WorkflowManager, workflow_for_reasons: Workflow
+):
+    task_node = _start_task(
+        mgr, workflow_for_reasons, "t_skip_then_step", data={"flag": False}
+    )
+
+    with pytest.raises(InvalidWorkflowStep):
+        mgr.start_next_step(
+            task_node.wf_node_id,
+            _step_config_id(workflow_for_reasons, "t_skip_then_step", 0),
+        )

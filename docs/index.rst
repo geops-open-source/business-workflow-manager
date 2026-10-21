@@ -149,7 +149,7 @@ application tables:
        # => WorkflowNodeInfo(wf_node_id=1, status=STARTED, ...)
 
        # Get available first steps (start tasks)
-       next_steps = mgr.get_next_steps(wf_node.wf_node_id)
+       next_steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
        # => [StepOption(wf_config_id=5, name='review', type=TASK, ...)]
 
        # Start the first task
@@ -157,7 +157,7 @@ application tables:
        # => TaskNodeInfo(wf_node_id=2, status=STARTED, ...)
 
        # Get the task's steps
-       steps = mgr.get_next_steps(task_node.wf_node_id)
+       steps = mgr.get_next_steps(task_node.wf_node_id).available_options
        # => [StepOption(wf_config_id=8, name='assessment', type=FORM, ...)]
 
        # Start the form step
@@ -166,8 +166,8 @@ application tables:
 
        session.commit()
 
-All public API methods return **frozen dataclasses** (``NodeInfo`` subclasses
-and ``StepOption``), not mutable ORM instances. Methods accept plain integer IDs
+All public API methods return **frozen dataclasses** (``NodeInfo`` subclasses,
+``StepInfo`` and ``StepOption``), not mutable ORM instances. Methods accept plain integer IDs
 (``node_id``, ``step_id``) as arguments.
 
 5. Conditional Branching
@@ -179,7 +179,7 @@ determine which task(s) come next:
 .. code-block:: python
 
    # After finishing all steps in the "review" task, get next tasks:
-   next_tasks = mgr.get_next_steps(task_node.wf_node_id)
+   next_tasks = mgr.get_next_steps(task_node.wf_node_id).available_options
    # If approved==True: => [StepOption(name='finalize', ...)]
    # If approved==False: => [StepOption(name='reject', ...)]
 

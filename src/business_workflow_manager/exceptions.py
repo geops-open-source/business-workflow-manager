@@ -25,6 +25,10 @@ class EventHandlerNotRegistered(WorkflowException):
     pass
 
 
+class WorkflowSelectionError(WorkflowException):
+    """Raised when a workflow selection file is invalid or cannot be resolved."""
+
+
 @dataclass
 class CascadeConflict(WorkflowException):
     """Raised when an update would create inconsistencies with child nodes.

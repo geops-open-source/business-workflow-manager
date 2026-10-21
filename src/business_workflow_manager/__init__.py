@@ -6,6 +6,7 @@ from .dto import (
     FormNodeInfo,
     NodeInfo,
     NoteNodeInfo,
+    StepInfo,
     StepOption,
     TaskNodeInfo,
     WorkflowNodeInfo,
@@ -18,9 +19,11 @@ from .exceptions import (
     WorkflowException,
     WorkflowExists,
     WorkflowNotFound,
+    WorkflowSelectionError,
 )
 from .manager import WorkflowManager, WorkflowManagerConfig, manager_factory
-from .types import ItemType, Language, NodeStatus, NodeType
+from .selection import resolve_workflow_files
+from .types import ItemType, Language, NextStepUnavailableReason, NodeStatus, NodeType
 
 __all__ = [
     "CascadeConflict",
@@ -33,10 +36,12 @@ __all__ = [
     "InvalidWorkflowStep",
     "ItemType",
     "Language",
+    "NextStepUnavailableReason",
     "NodeInfo",
     "NodeStatus",
     "NodeType",
     "NoteNodeInfo",
+    "StepInfo",
     "StepOption",
     "TaskNodeInfo",
     "WorkflowConfig",
@@ -46,5 +51,7 @@ __all__ = [
     "WorkflowManagerConfig",
     "WorkflowNodeInfo",
     "WorkflowNotFound",
+    "WorkflowSelectionError",
     "manager_factory",
+    "resolve_workflow_files",
 ]

@@ -78,7 +78,7 @@ def workflow_node(mgr: WorkflowManager) -> WorkflowNodeInfo:
 @pytest.fixture
 def task_node(mgr: WorkflowManager, workflow_node: WorkflowNodeInfo) -> NodeInfo:
     """Create a task_node node under the workflow."""
-    steps = mgr.get_next_steps(workflow_node.wf_node_id)
+    steps = mgr.get_next_steps(workflow_node.wf_node_id).available_options
     return mgr.start_next_step(workflow_node.wf_node_id, steps[0].wf_config_id)
 
 

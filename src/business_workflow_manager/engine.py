@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable, Sequence
 from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 import jmespath
@@ -22,9 +23,19 @@ from .models import (
     WorkflowConfig,
     WorkflowNode,
 )
-from .types import NodeStatus
+from .types import NextStepUnavailableReason, NodeStatus
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConfigStepInfo:
+    """Valid next step configs of a node, plus all reasons that restricted them."""
+
+    available_configs: Sequence[WorkflowConfig]
+    unavailable_reasons: set[NextStepUnavailableReason] = field(
+        default_factory=set[NextStepUnavailableReason]
+    )
 
 
 def default_is_applicable(session: Session, workflow: Workflow, entity_id: str) -> bool:
@@ -86,20 +97,44 @@ class Engine:
 
     def get_valid_links(
         self, node: TaskNode, ref_node: Node | None = None
-    ) -> list[Task]:
+    ) -> ConfigStepInfo:
+        """Evaluate the links of a task node.
+
+        ``END`` is never returned as a config. Reasons:
+
+        - ``STEP_NOT_CLOSED`` if a link condition was not met (e.g. a form
+          selection is missing),
+        - ``END_OF_WORKFLOW`` if a valid link points to ``END`` or the task
+          has no links at all.
+        """
         result: list[Task] = []
+        reasons: set[NextStepUnavailableReason] = set()
         assert isinstance(node.config, Task)
+        if not node.config.links:
+            reasons.add(NextStepUnavailableReason.END_OF_WORKFLOW)
         for link in node.config.links:
-            if not link.condition or self.evaluate_condition(
+            if link.condition and not self.evaluate_condition(
                 ref_node or node, link.condition
             ):
+                reason = NextStepUnavailableReason.STEP_NOT_CLOSED
+            elif link.target.name == "END":
+                reason = NextStepUnavailableReason.END_OF_WORKFLOW
+            else:
                 result.append(link.target)
-        return [t for t in result if t.name != "END"]
+                continue
+            reasons.add(reason)
+        return ConfigStepInfo(result, reasons)
 
     def get_next_task_steps(
         self, node: TaskNode, after_step: Form | Document | None = None
-    ) -> list[Form | Document]:
+    ) -> ConfigStepInfo:
+        """Determine the next steps within a task.
+
+        Adds ``STEP_NOT_CLOSED`` if a step was skipped because its condition
+        was not met.
+        """
         next_steps: list[Form | Document] = []
+        reasons: set[NextStepUnavailableReason] = set()
 
         assert isinstance(node.config, Task)
         available_steps = node.config.steps
@@ -118,16 +153,24 @@ class Engine:
                     if self.evaluate_condition(node, step.condition):
                         next_steps.append(step.step)
                     else:
+                        reasons.add(NextStepUnavailableReason.STEP_NOT_CLOSED)
                         continue
                 else:
                     next_steps.append(step.step)
                 break
-        return next_steps
+        return ConfigStepInfo(next_steps, reasons)
 
-    def get_next_steps(self, node: Node) -> Sequence[WorkflowConfig]:
+    def get_next_steps(self, node: Node) -> ConfigStepInfo:
+        """Determine the valid next steps of a node and why others are unavailable.
+
+        Nodes that are skipped or inactive (or whose parent task is) yield
+        neither options nor reasons.
+        """
         if not node.config:
             if not node.parent:
-                return []
+                return ConfigStepInfo(
+                    [], {NextStepUnavailableReason.TASK_WITHOUT_WORKFLOW}
+                )
             return self.get_next_steps(node.parent)
         if node.next_node:
             node = get_last_step(node)
@@ -139,13 +182,20 @@ class Engine:
                         "Workflow Node has no valid next steps because it is not started: %s",
                         node,
                     )
-                    return []
+                    if node.status == NodeStatus.FINISHED:
+                        return ConfigStepInfo(
+                            [], {NextStepUnavailableReason.TASK_CLOSED}
+                        )
+                    return ConfigStepInfo([])
                 assert isinstance(node.config, Workflow)
-                return [node.config.start_task] + [
-                    t
-                    for t in node.config.tasks.values()
-                    if t.is_start_task and t is not node.config.start_task
-                ]
+                return ConfigStepInfo(
+                    [node.config.start_task]
+                    + [
+                        t
+                        for t in node.config.tasks.values()
+                        if t.is_start_task and t is not node.config.start_task
+                    ]
+                )
 
             case TaskNode():
                 assert isinstance(node.config, Task)
@@ -156,15 +206,19 @@ class Engine:
                         "Task Node has no valid next steps because it is not started: %s",
                         node,
                     )
-                    return []
-                if steps := self.get_next_task_steps(node):
+                    return ConfigStepInfo([])
+                steps = self.get_next_task_steps(node)
+                if steps.available_configs:
                     return steps
-                else:
-                    logger.warning(
-                        "Task Node has no valid next steps because none are left: %s",
-                        node,
-                    )
-                    return []
+                logger.warning(
+                    "Task Node has no valid next steps because none are left: %s",
+                    node,
+                )
+                return ConfigStepInfo(
+                    [],
+                    steps.unavailable_reasons
+                    | {NextStepUnavailableReason.STEP_NOT_CLOSED},
+                )
 
             case FormNode() | DocumentNode():
                 if node.status != NodeStatus.FINISHED:
@@ -172,7 +226,9 @@ class Engine:
                         "Form or Document Node has no valid next steps because it is not finished: %s",
                         node,
                     )
-                    return []
+                    return ConfigStepInfo(
+                        [], {NextStepUnavailableReason.STEP_NOT_CLOSED}
+                    )
                 assert isinstance(node.config, Form | Document)
 
                 task_node = node.parent
@@ -184,20 +240,29 @@ class Engine:
                         "Form or Document Node has no valid next steps as parent task is not marked as STARTED: %s",
                         node,
                     )
-                    return []
+                    if task_node.status == NodeStatus.FINISHED:
+                        return ConfigStepInfo(
+                            [], {NextStepUnavailableReason.TASK_CLOSED}
+                        )
+                    return ConfigStepInfo([])
 
-                if steps := self.get_next_task_steps(task_node, after_step=node.config):
+                steps = self.get_next_task_steps(task_node, after_step=node.config)
+                if steps.available_configs:
                     return steps
 
                 logger.warning(
                     "Parent task of node has no more steps left: %s",
                     node,
                 )
-                return self.get_valid_links(task_node, ref_node=node)
+                links = self.get_valid_links(task_node, ref_node=node)
+                return ConfigStepInfo(
+                    links.available_configs,
+                    steps.unavailable_reasons | links.unavailable_reasons,
+                )
 
             case _:
                 logger.warning("Can not get valid next step for node: %s", node)
-                return []
+                return ConfigStepInfo([])
 
     def start_next_step(self, node: Node, wf_config: WorkflowConfig) -> Node:
         if not isinstance(wf_config, Task | Document | Form):
@@ -210,7 +275,7 @@ class Engine:
         if node.next_node:
             node = get_last_step(node)
 
-        valid_steps = self.get_next_steps(node)
+        valid_steps = self.get_next_steps(node).available_configs
         if wf_config not in valid_steps:
             valid_steps_str = "\n".join(str(s) for s in valid_steps)
             raise InvalidWorkflowStep(

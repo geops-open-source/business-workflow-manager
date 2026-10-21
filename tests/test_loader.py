@@ -1,12 +1,14 @@
 """Tests for business_workflow_manager.loader (load/dump workflow YAML ↔ DB)."""
 
 import re
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 import yaml
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from business_workflow_manager import (
@@ -14,9 +16,12 @@ from business_workflow_manager import (
     EventHandlerNotRegistered,
     WorkflowManager,
     WorkflowManagerConfig,
+    WorkflowSelectionError,
 )
+from business_workflow_manager.config import Workflow
 from business_workflow_manager.loader import get_translations
-from business_workflow_manager.models import Form, Node
+from business_workflow_manager.models import Form, Node, Translation, WorkflowConfig
+from business_workflow_manager.types import Language
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
@@ -302,3 +307,156 @@ def test_load_readme_example(mgr: WorkflowManager):
     reject = workflow.tasks["reject"]
     assert len(reject.steps) == 1
     assert len(reject.links) == 1
+
+
+# --- Selection import (ALMABASE-710) ---
+
+SIMPLE_KEY = "f222bcc9-e563-4014-acb3-f696860f9a0f"
+SIMPLE_TITLE_KEY = f"wf:{SIMPLE_KEY}:title"
+SIMPLE_STEP_KEY = f"wf:{SIMPLE_KEY}:task:anfrage:step:1:title"
+
+
+def _translation_rows(
+    session: Session, prefix: str
+) -> dict[tuple[str, str], tuple[str, datetime | None]]:
+    rows = session.execute(
+        select(
+            Translation.key,
+            Translation.locale,
+            Translation.value,
+            Translation.updated_at,
+        ).where(Translation.key.startswith(prefix))
+    )
+    return {(k, str(loc)): (v, u) for k, loc, v, u in rows}
+
+
+def _mark_edited(session: Session, key: str, locale: Language, value: str) -> None:
+    session.execute(
+        update(Translation)
+        .where(Translation.key == key, Translation.locale == locale)
+        .values(value=value, updated_at=datetime(2026, 1, 1))
+    )
+
+
+def _setup(tmp_path: Path, files: dict[str, str], selection: str) -> tuple[Path, Path]:
+    base = tmp_path / "workflows"
+    base.mkdir()
+    for name, content in files.items():
+        (base / name).write_text(content)
+    sel = tmp_path / "workflows.txt"
+    sel.write_text(selection)
+    return sel, base
+
+
+def _import(mgr: WorkflowManager, sel: Path, base: Path):
+    result = mgr.load_workflows_from_selection(sel, base)
+    mgr.session.flush()
+    mgr.session.expire_all()
+    return result
+
+
+def _count(session: Session) -> int | None:
+    return session.scalar(select(func.count()).select_from(WorkflowConfig))
+
+
+def test_selection_import_is_idempotent(mgr: WorkflowManager, tmp_path: Path):
+    sel, base = _setup(tmp_path, {"simple.yml": SIMPLE_WORKFLOW}, "simple.yml\n")
+
+    first = _import(mgr, sel, base)
+    before = _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}")
+    count = _count(mgr.session)
+    second = _import(mgr, sel, base)
+
+    assert [str(w.key) for w in first] == [SIMPLE_KEY]
+    assert first[0].wf_config_id == second[0].wf_config_id
+    assert _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}") == before
+    assert _count(mgr.session) == count
+    assert all(u is None for _, u in before.values())
+
+
+def test_selection_keeps_edited_translation(mgr: WorkflowManager, tmp_path: Path):
+    sel, base = _setup(tmp_path, {"simple.yml": SIMPLE_WORKFLOW}, "simple.yml\n")
+    _import(mgr, sel, base)
+    _mark_edited(mgr.session, SIMPLE_TITLE_KEY, Language.DE, "Edited")
+    stale_key = f"wf:{SIMPLE_KEY}:task:old:title"
+    mgr.session.add(Translation(key=stale_key, value="Old", locale=Language.DE))
+    mgr.session.flush()
+    mgr.session.execute(delete(Translation).where(Translation.key == SIMPLE_STEP_KEY))
+
+    (base / "simple.yml").write_text(SIMPLE_WORKFLOW.replace("Auskunft", "Neu"))
+    _import(mgr, sel, base)
+
+    rows = _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}")
+    assert rows[(SIMPLE_TITLE_KEY, "de")] == ("Edited", datetime(2026, 1, 1))
+    assert rows[(SIMPLE_TITLE_KEY, "fr")] == ("Neu (fr)", None)
+    assert rows[(SIMPLE_STEP_KEY, "de")] == ("Anfrage Dokument", None)
+    assert (stale_key, "de") in rows
+
+
+def _load_file(mgr: WorkflowManager, content: str) -> None:
+    mgr.load_workflow_from_file(StringIO(content))
+    mgr.session.flush()
+    mgr.session.expire_all()
+
+
+def test_load_workflow_from_file_keeps_edited_translation(mgr: WorkflowManager):
+    _load_file(mgr, SIMPLE_WORKFLOW)
+    _mark_edited(mgr.session, SIMPLE_TITLE_KEY, Language.DE, "Edited")
+    stale_key = f"wf:{SIMPLE_KEY}:task:old:title"
+    mgr.session.add(Translation(key=stale_key, value="Old", locale=Language.DE))
+    mgr.session.flush()
+    mgr.session.execute(delete(Translation).where(Translation.key == SIMPLE_STEP_KEY))
+
+    _load_file(mgr, SIMPLE_WORKFLOW.replace("Auskunft", "Neu"))
+
+    rows = _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}")
+    assert rows[(SIMPLE_TITLE_KEY, "de")] == ("Edited", datetime(2026, 1, 1))
+    assert rows[(SIMPLE_TITLE_KEY, "fr")] == ("Neu (fr)", None)
+    assert rows[(SIMPLE_STEP_KEY, "de")] == ("Anfrage Dokument", None)
+    assert (stale_key, "de") in rows
+
+
+def test_load_workflow_keeps_edited_translation(mgr: WorkflowManager):
+    _load_file(mgr, SIMPLE_WORKFLOW)
+    _mark_edited(mgr.session, SIMPLE_TITLE_KEY, Language.DE, "Edited")
+    mgr.load_workflow(Workflow.read(StringIO(SIMPLE_WORKFLOW)))
+    mgr.session.flush()
+    mgr.session.expire_all()
+    rows = _translation_rows(mgr.session, SIMPLE_TITLE_KEY)
+    assert rows[(SIMPLE_TITLE_KEY, "de")] == ("Edited", datetime(2026, 1, 1))
+
+
+def test_load_workflow_from_file_is_idempotent(mgr: WorkflowManager):
+    _load_file(mgr, SIMPLE_WORKFLOW)
+    before = _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}")
+    _load_file(mgr, SIMPLE_WORKFLOW)
+    assert _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}") == before
+    assert all(u is None for _, u in before.values())
+
+
+def test_selection_missing_file(mgr: WorkflowManager, tmp_path: Path):
+    with pytest.raises(WorkflowSelectionError, match="Cannot read"):
+        mgr.load_workflows_from_selection(tmp_path / "nope.txt", tmp_path)
+
+
+def test_selection_missing_listed_file(mgr: WorkflowManager, tmp_path: Path):
+    sel, base = _setup(
+        tmp_path, {"simple.yml": SIMPLE_WORKFLOW}, "simple.yml\nmissing.yml\n"
+    )
+    with pytest.raises(WorkflowSelectionError, match="missing.yml"):
+        mgr.load_workflows_from_selection(sel, base)
+    assert _count(mgr.session) == 0
+
+
+def test_selection_error_in_second_file_writes_nothing(
+    mgr: WorkflowManager, tmp_path: Path
+):
+    sel, base = _setup(
+        tmp_path,
+        {"a.yml": SIMPLE_WORKFLOW, "b.yml": "workflow: {broken: 1}\n"},
+        "a.yml\nb.yml\n",
+    )
+    with pytest.raises(WorkflowSelectionError, match="b.yml"):
+        mgr.load_workflows_from_selection(sel, base)
+    assert _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}") == {}
+    assert _count(mgr.session) == 0

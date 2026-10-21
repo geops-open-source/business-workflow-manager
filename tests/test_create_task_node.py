@@ -119,7 +119,7 @@ def test_parent_workflow_node(mgr: WorkflowManager, wf_node: WorkflowNodeInfo):
 def test_parent_walks_up_to_workflow(mgr: WorkflowManager, wf_node: WorkflowNodeInfo):
     """If reference is a task under a workflow, walks up to the WorkflowNode."""
     ts = datetime(2024, 6, 15)
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     # Use the task as reference — should walk up to the WorkflowNode

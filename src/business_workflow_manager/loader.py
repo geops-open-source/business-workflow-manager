@@ -1,19 +1,28 @@
 """Load and dump workflow configurations between YAML and database."""
 
+from collections.abc import Mapping
+from datetime import datetime
+from pathlib import Path
 from typing import Any, TextIO
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
 from . import config as cfg
 from .events import EventHandlerMap
-from .exceptions import EventHandlerNotRegistered, WorkflowNotFound
+from .exceptions import (
+    EventHandlerNotRegistered,
+    WorkflowNotFound,
+    WorkflowSelectionError,
+)
 from .models import Document as MDocument
 from .models import Form as MForm
 from .models import Task as MTask
 from .models import Translation, WorkflowConfig, WorkflowLink, WorkflowStep
 from .models import Workflow as MWorkflow
+from .selection import read as read_selection
+from .selection import resolve_workflow_files
 from .types import Language
 
 
@@ -22,6 +31,41 @@ def load_workflow_from_file(
 ) -> tuple[MWorkflow, cfg.Workflow]:
     config = cfg.Workflow.read(f)
     return load_workflow(session, config, event_handlers), config
+
+
+def load_workflows_from_selection(
+    session: Session,
+    selection_file: str | Path,
+    base_dir: str | Path,
+    event_handlers: EventHandlerMap | None = None,
+) -> list[MWorkflow]:
+    """Load all workflow files listed in ``selection_file`` (relative to
+    ``base_dir``) into the database.
+
+    Translations edited in the database (``updated_at`` set) are kept,
+    unedited ones are updated, new ones inserted; none are deleted.
+    All files are parsed before anything is written. Does NOT commit — the
+    caller must commit (or roll back on error) so the import is atomic.
+    """
+    paths = resolve_workflow_files(read_selection(selection_file), base_dir)
+
+    configs: list[tuple[Path, cfg.Workflow]] = []
+    for path in paths:
+        try:
+            with path.open(encoding="utf-8") as f:
+                config = cfg.Workflow.read(f)
+            config.validate_keys()
+        except Exception as e:
+            raise WorkflowSelectionError(
+                f"Invalid workflow file {str(path)!r}: {e}"
+            ) from e
+        configs.append((path, config))
+
+    result: list[MWorkflow] = []
+    for _path, config in configs:
+        result.append(load_workflow(session, config, event_handlers))
+    session.flush()
+    return result
 
 
 def create_translation(
@@ -36,29 +80,75 @@ def create_translation(
     )
 
 
+def _sync_translations(
+    session: Session,
+    prefix: str,
+    desired: Mapping[str, cfg.TranslatedString],
+) -> None:
+    """Write the ``desired`` translations of one workflow to the database.
+
+    Each translation row (key + language) is handled individually: rows that
+    were edited (``updated_at`` is set) are kept, unedited rows are updated
+    from ``desired`` and keep an empty ``updated_at``, missing rows are
+    inserted. No rows are deleted.
+    """
+    existing = {
+        (key, locale): updated_at
+        for key, locale, updated_at in session.execute(
+            select(Translation.key, Translation.locale, Translation.updated_at).where(
+                Translation.key.startswith(prefix)
+            )
+        )
+    }
+    now = datetime.now()
+    for key, translated_string in desired.items():
+        values = (
+            (Language.DE, translated_string.de),
+            (Language.FR, translated_string.fr),
+            (Language.IT, translated_string.it),
+        )
+        for locale, value in values:
+            if (key, locale) not in existing:
+                session.execute(
+                    insert(Translation).values(
+                        key=key,
+                        value=value,
+                        locale=locale,
+                        created_at=now,
+                        updated_at=None,
+                    )
+                )
+            elif existing[(key, locale)] is None:
+                # Set updated_at explicitly, so the onupdate default does not
+                # mark the imported row as edited.
+                session.execute(
+                    update(Translation)
+                    .where(Translation.key == key, Translation.locale == locale)
+                    .values(value=value, updated_at=None)
+                )
+
+
 def load_workflow(
     session: Session,
     config: cfg.Workflow,
     event_handlers: EventHandlerMap | None = None,
 ) -> MWorkflow:
-    """Load a workflow config into the database. Does NOT commit — caller must commit."""
+    """Load a workflow config into the database. Does NOT commit — caller must commit.
+
+    Translations edited in the database (``updated_at`` set) are kept,
+    unedited ones are updated, new ones inserted; none are deleted."""
     config.validate_keys()
 
     workflow_key = config.key or uuid4()
     workflow_translation_prefix = f"wf:{workflow_key}"
 
-    # Clear existing translations for this workflow
-    session.execute(
-        delete(Translation).where(
-            Translation.key.startswith(workflow_translation_prefix)
-        )
-    )
+    desired_translations: dict[str, cfg.TranslatedString] = {}
 
     def _translate(key: str, value: cfg.TranslatedString | str) -> str:
         key = f"{workflow_translation_prefix}:{key}"
         if isinstance(value, str):
             value = cfg.TranslatedString(de=value, fr=value, it=value)
-        create_translation(session, key, value)
+        desired_translations[key] = value
         return key
 
     def _dump_fields(prefix: str, fields: list[cfg.FormField]) -> list[Any]:
@@ -307,6 +397,12 @@ def load_workflow(
     workflow.start_task_id = tasks_by_ref[config.start_task_ref].wf_config_id
     assert workflow.start_task_id
 
+    session.flush()
+    _sync_translations(
+        session,
+        workflow_translation_prefix,
+        desired_translations,
+    )
     session.flush()
     return workflow
 

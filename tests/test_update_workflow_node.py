@@ -400,7 +400,7 @@ def _start_task_with_triggers(
     mgr: WorkflowManager, wf_node: WorkflowNodeInfo
 ) -> TaskNode:
     """Start the first task step and return the ORM object (status=STARTED, events_triggered=False)."""
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_info = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
     return mgr.session.get_one(TaskNode, task_info.wf_node_id)
 

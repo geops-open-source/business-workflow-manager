@@ -162,7 +162,7 @@ def test_parent_workflow_node(mgr: WorkflowManager, wf_node: WorkflowNodeInfo):
 def test_parent_task_node(mgr: WorkflowManager, wf_node: WorkflowNodeInfo):
     ts = datetime(2024, 6, 15, 10, 0, 0)
     # Start a task from the workflow
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     result = mgr.create_document_node(
@@ -236,11 +236,11 @@ def test_parent_prefers_task_over_workflow(
     """When both TaskNode and WorkflowNode are ancestors, TaskNode is preferred."""
     ts = datetime(2024, 6, 15, 10, 0, 0)
     # Start a task under the workflow
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     # Start a form step under the task
-    task_steps = mgr.get_next_steps(task.wf_node_id)
+    task_steps = mgr.get_next_steps(task.wf_node_id).available_options
     if task_steps:
         form = mgr.start_next_step(task.wf_node_id, task_steps[0].wf_config_id)
         # Use the form as reference — should find TaskNode (not WorkflowNode)

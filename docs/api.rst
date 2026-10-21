@@ -15,6 +15,14 @@ WorkflowManager
 
 .. autofunction:: manager_factory
 
+
+Workflow Selection
+------------------
+
+.. autofunction:: business_workflow_manager.selection.read
+
+.. autofunction:: resolve_workflow_files
+
 Data Transfer Objects
 ---------------------
 
@@ -46,6 +54,10 @@ Data Transfer Objects
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. autoclass:: StepInfo()
+   :members:
+   :undoc-members:
 
 .. autoclass:: StepOption()
    :members:

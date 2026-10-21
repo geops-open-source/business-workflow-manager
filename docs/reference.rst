@@ -28,6 +28,10 @@ Enums & Types
    :members:
    :undoc-members:
 
+.. autoclass:: business_workflow_manager.types.NextStepUnavailableReason
+   :members:
+   :undoc-members:
+
 GraphViz Export
 ---------------
 
@@ -57,5 +61,9 @@ Exceptions
    :show-inheritance:
 
 .. autoexception:: CascadeConflict
+   :members:
+   :show-inheritance:
+
+.. autoexception:: WorkflowSelectionError
    :members:
    :show-inheritance:

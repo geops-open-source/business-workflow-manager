@@ -64,7 +64,7 @@ def test_delete_task_without_children(mgr: WorkflowManager):
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
     mgr.delete_node(task.wf_node_id)
 
@@ -76,7 +76,7 @@ def test_cannot_delete_node_with_children(mgr: WorkflowManager):
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
     # Start a task (child of wf_node)
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     with pytest.raises(WorkflowException, match="has children"):
@@ -92,17 +92,17 @@ def _start_task(mgr: WorkflowManager, config: str):
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     return mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
 
 def test_cannot_delete_node_with_next_node(mgr: WorkflowManager):
     """A document with a next node is not read-only, but cannot be deleted."""
     task = _start_task(mgr, WORKFLOW_CONFIG)
-    task_steps = mgr.get_next_steps(task.wf_node_id)
+    task_steps = mgr.get_next_steps(task.wf_node_id).available_options
     doc1 = mgr.start_next_step(task.wf_node_id, task_steps[0].wf_config_id)
     mgr.update_document_node(doc1.wf_node_id, document_ref="REF")
-    doc1_steps = mgr.get_next_steps(doc1.wf_node_id)
+    doc1_steps = mgr.get_next_steps(doc1.wf_node_id).available_options
     doc2 = mgr.start_next_step(doc1.wf_node_id, doc1_steps[0].wf_config_id)
 
     doc1_info = _info(mgr, doc1.wf_node_id)
@@ -144,10 +144,10 @@ workflow:
 
 def _start_form_with_next_node(mgr: WorkflowManager):
     task = _start_task(mgr, FORM_WORKFLOW_CONFIG)
-    task_steps = mgr.get_next_steps(task.wf_node_id)
+    task_steps = mgr.get_next_steps(task.wf_node_id).available_options
     form = mgr.start_next_step(task.wf_node_id, task_steps[0].wf_config_id)
     mgr.update_form_node(form.wf_node_id, form_data={})
-    form_steps = mgr.get_next_steps(form.wf_node_id)
+    form_steps = mgr.get_next_steps(form.wf_node_id).available_options
     doc = mgr.start_next_step(form.wf_node_id, form_steps[0].wf_config_id)
     return form, doc
 
@@ -173,9 +173,9 @@ def test_form_is_editable_again_after_deleting_next_node(mgr: WorkflowManager):
     assert form_info.is_deletable
     mgr.update_form_node(form.wf_node_id, form_data={"changed": True})
     # The deleted step is offered again.
-    assert [s.wf_config_id for s in mgr.get_next_steps(form.wf_node_id)] == [
-        doc.wf_config_id
-    ]
+    assert [
+        s.wf_config_id for s in mgr.get_next_steps(form.wf_node_id).available_options
+    ] == [doc.wf_config_id]
     mgr.delete_node(form.wf_node_id)
 
 

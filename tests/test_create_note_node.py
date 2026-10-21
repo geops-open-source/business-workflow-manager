@@ -117,7 +117,7 @@ def test_parent_workflow_node(mgr: WorkflowManager, wf_node: WorkflowNodeInfo):
 
 def test_parent_task_node(mgr: WorkflowManager, wf_node: WorkflowNodeInfo):
     ts = datetime(2024, 6, 15, 10, 0, 0)
-    steps = mgr.get_next_steps(wf_node.wf_node_id)
+    steps = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task = mgr.start_next_step(wf_node.wf_node_id, steps[0].wf_config_id)
 
     result = mgr.create_note_node(

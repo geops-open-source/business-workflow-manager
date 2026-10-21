@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from types import TracebackType
 from typing import Any, TextIO, cast
 from uuid import UUID
@@ -17,6 +18,7 @@ from .dto import (
     FormNodeInfo,
     NodeInfo,
     NoteNodeInfo,
+    StepInfo,
     StepOption,
     TaskNodeInfo,
     WorkflowNodeInfo,
@@ -37,6 +39,7 @@ from .loader import (
     dump_workflow_to_file,
     load_workflow,
     load_workflow_from_file,
+    load_workflows_from_selection,
 )
 from .models import (
     DocumentNode,
@@ -48,7 +51,7 @@ from .models import (
     WorkflowConfig,
     WorkflowNode,
 )
-from .types import NodeStatus
+from .types import NextStepUnavailableReason, NodeStatus
 
 VALID_ENTITY_DATA_KEYS: list[str] = ["form"]
 
@@ -232,12 +235,24 @@ class WorkflowManager:
         return config
 
     def load_workflow_from_file(self, f: TextIO) -> tuple[Workflow, cfg.Workflow]:
-        """Parse a YAML file and load the workflow into the database."""
+        """Parse a YAML file and load the workflow into the database.
+        Edited translations are kept. Does NOT commit."""
         return load_workflow_from_file(self.session, f, self._config.event_handlers)
 
     def load_workflow(self, config: cfg.Workflow) -> Workflow:
-        """Load a parsed workflow config into the database."""
+        """Load a parsed workflow config into the database.
+        Edited translations are kept. Does NOT commit."""
         return load_workflow(self.session, config, self._config.event_handlers)
+
+    def load_workflows_from_selection(
+        self, selection_file: str | Path, base_dir: str | Path
+    ) -> list[Workflow]:
+        """Load all workflow files listed in ``selection_file`` (relative to
+        ``base_dir``) into the database, keeping edited translations.
+        Returns the loaded workflows in file order. Does NOT commit."""
+        return load_workflows_from_selection(
+            self.session, selection_file, base_dir, self._config.event_handlers
+        )
 
     def dump_workflow(self, workflow: Workflow) -> cfg.Workflow:
         """Export an ORM Workflow back to a pydantic config object."""
@@ -272,11 +287,22 @@ class WorkflowManager:
         self.session.flush()
         return WorkflowNodeInfo.from_model(node)
 
-    def get_next_steps(self, node_id: int) -> list[StepOption]:
-        """Get valid next steps/tasks for the current node state."""
+    def get_next_steps(self, node_id: int) -> StepInfo:
+        """Get valid next steps/tasks for the current node state.
+
+        Returns a :class:`StepInfo` with the available options and all reasons
+        that restricted them (see :class:`NextStepUnavailableReason`).
+        """
         node = self._get_node(node_id)
-        configs = self.engine.get_next_steps(node)
-        return [_config_to_step_option(c) for c in configs]
+        info = self.engine.get_next_steps(node)
+        return StepInfo(
+            available_options=[
+                _config_to_step_option(c) for c in info.available_configs
+            ],
+            unavailable_reasons=[
+                r for r in NextStepUnavailableReason if r in info.unavailable_reasons
+            ],
+        )
 
     def start_next_step(self, node_id: int, step_id: int) -> NodeInfo:
         """Create and link the next execution node.

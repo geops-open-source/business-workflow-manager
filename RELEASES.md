@@ -1,3 +1,8 @@
+## Release 1.4.0
+
+- Allow multiple workflows to be loaded via configuration file
+- Give user additional information if no next task is available
+
 ## Release 1.3.0
 
 - Allow tasks to be created as subtasks to tasks

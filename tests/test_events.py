@@ -233,7 +233,7 @@ def test_can_fetch_related_events_via_node_config(session: Session) -> None:
     workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML))
 
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
-    [step_info] = mgr.get_next_steps(wf_node.wf_node_id)
+    [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, step_info.wf_config_id)
 
     config = session.get(WorkflowConfig, task_node.wf_config_id)
@@ -306,7 +306,7 @@ def test_context_propagates_through_trigger_events(session: Session) -> None:
 
     workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML))
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-ctx")
-    [step_info] = mgr.get_next_steps(wf_node.wf_node_id)
+    [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, step_info.wf_config_id)
 
     from business_workflow_manager.types import NodeStatus
@@ -345,7 +345,7 @@ def test_trigger_events_with_mapping_value(session: Session) -> None:
 
     workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML))
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-mapping")
-    [step_info] = mgr.get_next_steps(wf_node.wf_node_id)
+    [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, step_info.wf_config_id)
 
     from business_workflow_manager.types import NodeStatus
@@ -370,7 +370,7 @@ def test_trigger_events_with_scalar_value(session: Session) -> None:
 
     workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML_SCALAR_TRIGGER))
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-scalar")
-    [step_info] = mgr.get_next_steps(wf_node.wf_node_id)
+    [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, step_info.wf_config_id)
 
     from business_workflow_manager.types import NodeStatus
