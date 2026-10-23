@@ -19,8 +19,8 @@ from .exceptions import (
     WorkflowException,
     WorkflowExists,
     WorkflowNotFound,
-    WorkflowSelectionError,
 )
+from .loader import LoadedWorkflow
 from .manager import WorkflowManager, WorkflowManagerConfig, manager_factory
 from .selection import resolve_workflow_files
 from .types import ItemType, Language, NextStepUnavailableReason, NodeStatus, NodeType
@@ -36,6 +36,7 @@ __all__ = [
     "InvalidWorkflowStep",
     "ItemType",
     "Language",
+    "LoadedWorkflow",
     "NextStepUnavailableReason",
     "NodeInfo",
     "NodeStatus",
@@ -51,7 +52,6 @@ __all__ = [
     "WorkflowManagerConfig",
     "WorkflowNodeInfo",
     "WorkflowNotFound",
-    "WorkflowSelectionError",
     "manager_factory",
     "resolve_workflow_files",
 ]

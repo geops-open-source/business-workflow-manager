@@ -22,7 +22,7 @@ workflow:
 
 
 def test_created_at_set_on_insert(mgr: WorkflowManager):
-    wf, _ = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW))
+    wf = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 
@@ -35,7 +35,7 @@ def test_created_at_set_on_insert(mgr: WorkflowManager):
 
 
 def test_updated_at_none_on_insert(mgr: WorkflowManager):
-    wf, _ = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW))
+    wf = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 
@@ -45,7 +45,7 @@ def test_updated_at_none_on_insert(mgr: WorkflowManager):
 
 
 def test_updated_at_set_on_update(mgr: WorkflowManager):
-    wf, _ = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW))
+    wf = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 

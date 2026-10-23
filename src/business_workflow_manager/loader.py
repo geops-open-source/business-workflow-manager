@@ -1,6 +1,7 @@
 """Load and dump workflow configurations between YAML and database."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -14,7 +15,6 @@ from .events import EventHandlerMap
 from .exceptions import (
     EventHandlerNotRegistered,
     WorkflowNotFound,
-    WorkflowSelectionError,
 )
 from .models import Document as MDocument
 from .models import Form as MForm
@@ -26,45 +26,43 @@ from .selection import resolve_workflow_files
 from .types import Language
 
 
+@dataclass(frozen=True)
+class LoadedWorkflow:
+    """A workflow loaded from a file."""
+
+    workflow: MWorkflow
+    """The workflow database object."""
+    config: cfg.Workflow
+    """The workflow config as read from the file."""
+
+
 def load_workflow_from_file(
     session: Session, f: TextIO, event_handlers: EventHandlerMap | None = None
-) -> tuple[MWorkflow, cfg.Workflow]:
+) -> LoadedWorkflow:
     config = cfg.Workflow.read(f)
-    return load_workflow(session, config, event_handlers), config
+    return LoadedWorkflow(load_workflow(session, config, event_handlers), config)
 
 
 def load_workflows_from_selection(
     session: Session,
-    selection_file: str | Path,
+    selection: TextIO,
     base_dir: str | Path,
     event_handlers: EventHandlerMap | None = None,
-) -> list[MWorkflow]:
-    """Load all workflow files listed in ``selection_file`` (relative to
+) -> list[tuple[Path, LoadedWorkflow]]:
+    """Load all workflow files listed in the ``selection`` stream (relative to
     ``base_dir``) into the database.
 
     Translations edited in the database (``updated_at`` set) are kept,
     unedited ones are updated, new ones inserted; none are deleted.
-    All files are parsed before anything is written. Does NOT commit — the
-    caller must commit (or roll back on error) so the import is atomic.
+    Does NOT commit; on error the caller must roll back.
     """
-    paths = resolve_workflow_files(read_selection(selection_file), base_dir)
+    paths = resolve_workflow_files(read_selection(selection), base_dir)
 
-    configs: list[tuple[Path, cfg.Workflow]] = []
+    result: list[tuple[Path, LoadedWorkflow]] = []
     for path in paths:
-        try:
-            with path.open(encoding="utf-8") as f:
-                config = cfg.Workflow.read(f)
-            config.validate_keys()
-        except Exception as e:
-            raise WorkflowSelectionError(
-                f"Invalid workflow file {str(path)!r}: {e}"
-            ) from e
-        configs.append((path, config))
-
-    result: list[MWorkflow] = []
-    for _path, config in configs:
-        result.append(load_workflow(session, config, event_handlers))
-    session.flush()
+        with path.open(encoding="utf-8") as f:
+            loaded = load_workflow_from_file(session, f, event_handlers)
+        result.append((path, loaded))
     return result
 
 

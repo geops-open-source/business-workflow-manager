@@ -109,7 +109,7 @@ from business_workflow_manager import WorkflowManager
 with Session(engine) as session:
     with WorkflowManager(session) as mgr:
         with open("workflows/review.yaml") as f:
-            workflow, config = mgr.load_workflow_from_file(f)
+            loaded = mgr.load_workflow_from_file(f)  # loaded.workflow, loaded.config
         session.commit()  # The library flushes but never commits — you control transactions
 ```
 
@@ -296,9 +296,9 @@ with WorkflowManager(session) as mgr:
 
 | Method | Description |
 |--------|-------------|
-| `load_workflow_from_file(f)` | Parse YAML file and load into DB, keeping edited translations. Returns `(Workflow, config)`. |
+| `load_workflow_from_file(f)` | Parse YAML file and load into DB, keeping edited translations. Returns `LoadedWorkflow` (`.workflow`, `.config`). |
 | `load_workflow(config)` | Load a parsed `Workflow` config into DB, keeping edited translations. Returns the ORM `Workflow`. |
-| `load_workflows_from_selection(selection_file, base_dir)` | Load all workflow files listed in a plain-text selection file into DB, keeping edited translations. Returns the loaded `list[Workflow]` in file order. |
+| `load_workflows_from_selection(selection, base_dir)` | Load all workflow files listed in a plain-text selection stream into DB, keeping edited translations. Returns `list[tuple[Path, LoadedWorkflow]]` in file order. |
 | `dump_workflow(workflow)` | Export an ORM `Workflow` back to a pydantic config object. |
 | `dump_workflow_to_file(key, f)` | Export a workflow (by UUID key) to YAML file. |
 | `start_workflow(workflow_id, entity_id)` | Create a new workflow instance. Returns `WorkflowNodeInfo`. |
@@ -468,7 +468,6 @@ from business_workflow_manager.exceptions import (
     WorkflowExists,        # Duplicate workflow
     InvalidWorkflowStep,   # Step not valid for current state
     CascadeConflict,       # Update conflicts with child nodes
-    WorkflowSelectionError,  # Selection file or listed workflow file missing / invalid
 )
 ```
 
@@ -537,20 +536,20 @@ baugesuch/vorabklaerung.yml
 ```
 
 ```python
-from business_workflow_manager import WorkflowSelectionError
-
 try:
-    loaded = mgr.load_workflows_from_selection("config/workflows.txt", "workflows/")
+    with open("config/workflows.txt") as f:
+        loaded = mgr.load_workflows_from_selection(f, "workflows/")
     session.commit()
-except WorkflowSelectionError:
+except Exception:
     session.rollback()
     raise
 ```
 
-A missing selection file, a listed file that does not exist or an invalid
-workflow file raise `WorkflowSelectionError`. All files are parsed before
-anything is written. The function only flushes; commit or roll back yourself
-to make the import atomic.
+`loaded` contains one `(path, LoadedWorkflow)` tuple per listed file. A listed file
+that does not exist raises `WorkflowException`; errors from invalid workflow
+files propagate unchanged.
+Files are loaded one after another; the function only flushes, so roll back
+on error to discard files already loaded.
 
 Translations are handled per row (key + language). This applies to every
 import path: `load_workflow`, `load_workflow_from_file` and

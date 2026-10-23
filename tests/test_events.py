@@ -186,7 +186,7 @@ def test_handle_event_within_workflow(session: Session) -> None:
     mgr = WorkflowManager(session, config)
     mgr.register_event_handler(MyEvent, handler)
 
-    workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML))
+    workflow = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML)).workflow
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
 
     mgr.handle_event(MyEvent(str(wf_node.wf_node_id)), _make_node())
@@ -230,7 +230,7 @@ def test_can_fetch_related_events_via_node_config(session: Session) -> None:
     config = WorkflowManagerConfig()
     mgr = WorkflowManager(session, config)
     mgr.register_event_handler(MyEvent, lambda s, e, n, c: None)
-    workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML))
+    workflow = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML)).workflow
 
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-1")
     [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
@@ -304,7 +304,7 @@ def test_context_propagates_through_trigger_events(session: Session) -> None:
     mgr = WorkflowManager(session, config, context=ctx)
     mgr.register_event_handler(MyEvent, handler)
 
-    workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML))
+    workflow = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML)).workflow
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-ctx")
     [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, step_info.wf_config_id)
@@ -343,7 +343,7 @@ def test_trigger_events_with_mapping_value(session: Session) -> None:
     mgr = WorkflowManager(session, config)
     mgr.register_event_handler(MyEvent, handler)
 
-    workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML))
+    workflow = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML)).workflow
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-mapping")
     [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, step_info.wf_config_id)
@@ -368,7 +368,9 @@ def test_trigger_events_with_scalar_value(session: Session) -> None:
     mgr = WorkflowManager(session, config)
     mgr.register_event_handler(MyEvent, handler)
 
-    workflow, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_YAML_SCALAR_TRIGGER))
+    workflow = mgr.load_workflow_from_file(
+        StringIO(WORKFLOW_YAML_SCALAR_TRIGGER)
+    ).workflow
     wf_node = mgr.start_workflow(workflow.wf_config_id, entity_id="entity-scalar")
     [step_info] = mgr.get_next_steps(wf_node.wf_node_id).available_options
     task_node = mgr.start_next_step(wf_node.wf_node_id, step_info.wf_config_id)

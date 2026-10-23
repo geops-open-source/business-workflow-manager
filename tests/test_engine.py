@@ -176,34 +176,34 @@ workflow:
 
 @pytest.fixture
 def workflow_for_reasons(mgr: WorkflowManager) -> Workflow:
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_FOR_REASONS))
+    loaded_wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_FOR_REASONS))
     mgr.session.flush()
     mgr.session.expire_all()
-    return wf
+    return loaded_wf.workflow
 
 
 @pytest.fixture
 def workflow(mgr: WorkflowManager) -> Workflow:
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    loaded_wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
     mgr.session.flush()
     mgr.session.expire_all()
-    return wf
+    return loaded_wf.workflow
 
 
 @pytest.fixture
 def workflow_with_conditions(mgr: WorkflowManager) -> Workflow:
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_WITH_CONDITIONS))
+    loaded_wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_WITH_CONDITIONS))
     mgr.session.flush()
     mgr.session.expire_all()
-    return wf
+    return loaded_wf.workflow
 
 
 @pytest.fixture
 def workflow_max_one(mgr: WorkflowManager) -> Workflow:
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_MAX_ONE))
+    loaded_wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_MAX_ONE))
     mgr.session.flush()
     mgr.session.expire_all()
-    return wf
+    return loaded_wf.workflow
 
 
 def test_is_applicable_unlimited(mgr: WorkflowManager, workflow: Workflow):

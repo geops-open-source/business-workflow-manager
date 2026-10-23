@@ -1,3 +1,7 @@
+## Release 1.5.0
+
+- Simplify API for loading multiple workflows
+
 ## Release 1.4.0
 
 - Allow multiple workflows to be loaded via configuration file

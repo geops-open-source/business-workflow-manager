@@ -60,7 +60,7 @@ def test_delete_top_level_note(mgr: WorkflowManager):
 
 def test_delete_task_without_children(mgr: WorkflowManager):
     """Can delete a task node that has no children."""
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
@@ -71,7 +71,7 @@ def test_delete_task_without_children(mgr: WorkflowManager):
 
 def test_cannot_delete_node_with_children(mgr: WorkflowManager):
     """Cannot delete a node that has children."""
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
@@ -88,7 +88,7 @@ def _info(mgr: WorkflowManager, node_id: int) -> NodeInfo:
 
 
 def _start_task(mgr: WorkflowManager, config: str):
-    wf, _ = mgr.load_workflow_from_file(StringIO(config))
+    wf = mgr.load_workflow_from_file(StringIO(config)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")

@@ -8,15 +8,16 @@ from uuid import UUID
 
 import pytest
 import yaml
+from pydantic import ValidationError
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from business_workflow_manager import (
     Event,
     EventHandlerNotRegistered,
+    WorkflowException,
     WorkflowManager,
     WorkflowManagerConfig,
-    WorkflowSelectionError,
 )
 from business_workflow_manager.config import Workflow
 from business_workflow_manager.loader import get_translations
@@ -157,7 +158,7 @@ def _test_trigger_manager(session: Session) -> WorkflowManager:
 
 
 def test_load_simple(mgr: WorkflowManager):
-    workflow, _ = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW))
+    workflow = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 
@@ -189,7 +190,7 @@ def test_load_simple(mgr: WorkflowManager):
 
 def test_load_extended(session: Session):
     mgr = _test_trigger_manager(session)
-    workflow, _ = mgr.load_workflow_from_file(StringIO(EXTENDED_WORKFLOW))
+    workflow = mgr.load_workflow_from_file(StringIO(EXTENDED_WORKFLOW)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 
@@ -238,7 +239,7 @@ workflow:
       steps: []
       links: []
 """
-    workflow, _ = mgr.load_workflow_from_file(StringIO(yaml_content))
+    workflow = mgr.load_workflow_from_file(StringIO(yaml_content)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     assert workflow.key is not None
@@ -247,7 +248,7 @@ workflow:
 
 def test_roundtrip_simple(mgr: WorkflowManager):
     original = yaml.safe_load(StringIO(SIMPLE_WORKFLOW))
-    workflow, _ = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW))
+    workflow = mgr.load_workflow_from_file(StringIO(SIMPLE_WORKFLOW)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 
@@ -262,7 +263,7 @@ def test_roundtrip_simple(mgr: WorkflowManager):
 def test_roundtrip_extended(session: Session):
     mgr = _test_trigger_manager(session)
     original = yaml.safe_load(StringIO(EXTENDED_WORKFLOW))
-    workflow, _ = mgr.load_workflow_from_file(StringIO(EXTENDED_WORKFLOW))
+    workflow = mgr.load_workflow_from_file(StringIO(EXTENDED_WORKFLOW)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 
@@ -282,7 +283,7 @@ def test_load_unregistered_event_trigger_raises(mgr: WorkflowManager):
 def test_load_readme_example(mgr: WorkflowManager):
     """The example YAML from the README can be loaded successfully."""
     yaml_text = _extract_readme_workflow()
-    workflow, _ = mgr.load_workflow_from_file(StringIO(yaml_text))
+    workflow = mgr.load_workflow_from_file(StringIO(yaml_text)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
 
@@ -349,7 +350,8 @@ def _setup(tmp_path: Path, files: dict[str, str], selection: str) -> tuple[Path,
 
 
 def _import(mgr: WorkflowManager, sel: Path, base: Path):
-    result = mgr.load_workflows_from_selection(sel, base)
+    with sel.open() as f:
+        result = mgr.load_workflows_from_selection(f, base)
     mgr.session.flush()
     mgr.session.expire_all()
     return result
@@ -367,8 +369,10 @@ def test_selection_import_is_idempotent(mgr: WorkflowManager, tmp_path: Path):
     count = _count(mgr.session)
     second = _import(mgr, sel, base)
 
-    assert [str(w.key) for w in first] == [SIMPLE_KEY]
-    assert first[0].wf_config_id == second[0].wf_config_id
+    assert [(p, str(lw.workflow.key)) for p, lw in first] == [
+        (base / "simple.yml", SIMPLE_KEY)
+    ]
+    assert first[0][1].workflow.wf_config_id == second[0][1].workflow.wf_config_id
     assert _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}") == before
     assert _count(mgr.session) == count
     assert all(u is None for _, u in before.values())
@@ -434,29 +438,23 @@ def test_load_workflow_from_file_is_idempotent(mgr: WorkflowManager):
     assert all(u is None for _, u in before.values())
 
 
-def test_selection_missing_file(mgr: WorkflowManager, tmp_path: Path):
-    with pytest.raises(WorkflowSelectionError, match="Cannot read"):
-        mgr.load_workflows_from_selection(tmp_path / "nope.txt", tmp_path)
-
-
 def test_selection_missing_listed_file(mgr: WorkflowManager, tmp_path: Path):
     sel, base = _setup(
         tmp_path, {"simple.yml": SIMPLE_WORKFLOW}, "simple.yml\nmissing.yml\n"
     )
-    with pytest.raises(WorkflowSelectionError, match="missing.yml"):
-        mgr.load_workflows_from_selection(sel, base)
+    with pytest.raises(WorkflowException, match="missing.yml"):
+        _import(mgr, sel, base)
     assert _count(mgr.session) == 0
 
 
-def test_selection_error_in_second_file_writes_nothing(
-    mgr: WorkflowManager, tmp_path: Path
-):
+def test_selection_error_in_second_file_rollback(mgr: WorkflowManager, tmp_path: Path):
     sel, base = _setup(
         tmp_path,
         {"a.yml": SIMPLE_WORKFLOW, "b.yml": "workflow: {broken: 1}\n"},
         "a.yml\nb.yml\n",
     )
-    with pytest.raises(WorkflowSelectionError, match="b.yml"):
-        mgr.load_workflows_from_selection(sel, base)
+    with pytest.raises(ValidationError):
+        _import(mgr, sel, base)
+    mgr.session.rollback()
     assert _translation_rows(mgr.session, f"wf:{SIMPLE_KEY}") == {}
     assert _count(mgr.session) == 0

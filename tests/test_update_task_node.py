@@ -69,7 +69,7 @@ def mgr(session: Session, collected_events: list[Event]) -> WorkflowManager:
 @pytest.fixture
 def workflow_node(mgr: WorkflowManager) -> WorkflowNodeInfo:
     """Create a workflow instance."""
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     return mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")

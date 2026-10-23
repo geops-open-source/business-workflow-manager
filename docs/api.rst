@@ -15,6 +15,9 @@ WorkflowManager
 
 .. autofunction:: manager_factory
 
+.. autoclass:: LoadedWorkflow
+   :members:
+
 
 Workflow Selection
 ------------------

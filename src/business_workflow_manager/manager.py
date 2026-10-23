@@ -35,6 +35,7 @@ from .exceptions import (
     WorkflowNotFound,
 )
 from .loader import (
+    LoadedWorkflow,
     dump_workflow,
     dump_workflow_to_file,
     load_workflow,
@@ -234,9 +235,9 @@ class WorkflowManager:
             raise WorkflowNotFound(f"No workflow config with id={config_id}")
         return config
 
-    def load_workflow_from_file(self, f: TextIO) -> tuple[Workflow, cfg.Workflow]:
+    def load_workflow_from_file(self, f: TextIO) -> LoadedWorkflow:
         """Parse a YAML file and load the workflow into the database.
-        Edited translations are kept. Does NOT commit."""
+        Returns the DB workflow and the parsed config. Edited translations are kept. Does NOT commit."""
         return load_workflow_from_file(self.session, f, self._config.event_handlers)
 
     def load_workflow(self, config: cfg.Workflow) -> Workflow:
@@ -245,13 +246,13 @@ class WorkflowManager:
         return load_workflow(self.session, config, self._config.event_handlers)
 
     def load_workflows_from_selection(
-        self, selection_file: str | Path, base_dir: str | Path
-    ) -> list[Workflow]:
-        """Load all workflow files listed in ``selection_file`` (relative to
-        ``base_dir``) into the database, keeping edited translations.
-        Returns the loaded workflows in file order. Does NOT commit."""
+        self, selection: TextIO, base_dir: str | Path
+    ) -> list[tuple[Path, LoadedWorkflow]]:
+        """Load all workflow files listed in the ``selection`` stream (relative
+        to ``base_dir``) into the database, keeping edited translations.
+        Returns ``(path, LoadedWorkflow)`` per file in file order. Does NOT commit."""
         return load_workflows_from_selection(
-            self.session, selection_file, base_dir, self._config.event_handlers
+            self.session, selection, base_dir, self._config.event_handlers
         )
 
     def dump_workflow(self, workflow: Workflow) -> cfg.Workflow:

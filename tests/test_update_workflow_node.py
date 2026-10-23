@@ -41,7 +41,7 @@ workflow:
 
 @pytest.fixture
 def wf_node(mgr: WorkflowManager) -> WorkflowNodeInfo:
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     return mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
@@ -388,9 +388,9 @@ def mgr_with_triggers(
 def wf_node_with_triggers(
     mgr_with_triggers: WorkflowManager,
 ) -> WorkflowNodeInfo:
-    wf, _ = mgr_with_triggers.load_workflow_from_file(
+    wf = mgr_with_triggers.load_workflow_from_file(
         StringIO(WORKFLOW_CONFIG_WITH_TRIGGERS)
-    )
+    ).workflow
     mgr_with_triggers.session.flush()
     mgr_with_triggers.session.expire_all()
     return mgr_with_triggers.start_workflow(wf.wf_config_id, entity_id="entity-1")

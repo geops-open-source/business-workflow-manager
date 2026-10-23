@@ -38,7 +38,7 @@ workflow:
 
 @pytest.fixture
 def form_node(mgr: WorkflowManager) -> FormNodeInfo:
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-1")
@@ -126,7 +126,7 @@ def test_not_found(mgr: WorkflowManager):
 
 def test_wrong_node_type(mgr: WorkflowManager, form_node: FormNodeInfo):
     """Raises WorkflowNotFound if the node is not a FormNode."""
-    wf, _ = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    wf = mgr.load_workflow_from_file(StringIO(WORKFLOW_CONFIG)).workflow
     mgr.session.flush()
     mgr.session.expire_all()
     wf_node = mgr.start_workflow(wf.wf_config_id, entity_id="entity-2")

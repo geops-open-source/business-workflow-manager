@@ -11,25 +11,15 @@ Blank lines and lines starting with ``#`` are ignored.
 """
 
 from pathlib import Path
+from typing import TextIO
 
-from .exceptions import WorkflowSelectionError
+from .exceptions import WorkflowException
 
 
-def read(path: str | Path) -> list[str]:
-    """Read the relative workflow file paths listed in ``path``.
-
-    Raises:
-        WorkflowSelectionError: if the file is missing or unreadable.
-    """
-    path = Path(path)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as e:
-        raise WorkflowSelectionError(
-            f"Cannot read workflow selection {str(path)!r}: {e}"
-        ) from e
+def read(f: TextIO) -> list[str]:
+    """Read the relative workflow file paths listed in the stream ``f``."""
     entries: list[str] = []
-    for line in text.splitlines():
+    for line in f:
         line = line.strip()
         if line and not line.startswith("#"):
             entries.append(line)
@@ -40,15 +30,15 @@ def resolve_workflow_files(entries: list[str], base_dir: str | Path) -> list[Pat
     """Return the paths of ``entries`` relative to ``base_dir``.
 
     Raises:
-        WorkflowSelectionError: if an entry is absolute or the file does not exist.
+        WorkflowException: if an entry is absolute or the file does not exist.
     """
     base = Path(base_dir)
     paths: list[Path] = []
     for entry in entries:
         if Path(entry).is_absolute():
-            raise WorkflowSelectionError(f"Absolute path not allowed: {entry!r}")
+            raise WorkflowException(f"Absolute path not allowed: {entry!r}")
         path = base / entry
         if not path.is_file():
-            raise WorkflowSelectionError(f"Workflow file not found: {str(path)!r}")
+            raise WorkflowException(f"Workflow file not found: {str(path)!r}")
         paths.append(path)
     return paths

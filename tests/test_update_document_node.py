@@ -126,7 +126,7 @@ def test_not_found(mgr: WorkflowManager):
 def test_wrong_node_type(mgr: WorkflowManager, session: Session):
     """Raises WorkflowNotFound if the node is not a DocumentNode."""
     mgr2 = WorkflowManager(session)
-    wf, _ = mgr2.load_workflow_from_file(StringIO(WORKFLOW_CONFIG))
+    wf = mgr2.load_workflow_from_file(StringIO(WORKFLOW_CONFIG)).workflow
     mgr2.session.flush()
     mgr2.session.expire_all()
     wf_node = mgr2.start_workflow(wf.wf_config_id, entity_id="entity-1")

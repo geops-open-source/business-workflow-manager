@@ -63,7 +63,3 @@ Exceptions
 .. autoexception:: CascadeConflict
    :members:
    :show-inheritance:
-
-.. autoexception:: WorkflowSelectionError
-   :members:
-   :show-inheritance:
